@@ -123,25 +123,25 @@ STATUS = {
     "hi": {"done": "ho gaya", "partly": "aadha hua", "not_done": "nahi hua", "pending": "baaki"},
 }
 
-UPCOMING = re.compile(r"upcoming|future|aane wale|aage|all plans|next days|sab plan", re.I)
+UPCOMING = re.compile(r"upcoming|future|aane wale|aage|all plans|next days|sab plan|भविष्य|आगे|आने वाले", re.I)
 
 CHECKIN_RE = re.compile(
-    r"\b(checkin|check-in|check in|day end|day-end|wrap up|wrapup|shutdown check|sone ja raha|band kar raha|aaj ka checkin)\b",
+    r"\b(checkin|check-in|check in|day end|day-end|wrap up|wrapup|shutdown check|sone ja raha|band kar raha|aaj ka checkin)\b|चेक\s*इन|दिन खत्म",
     re.I,
 )
 
 ALL_DONE_RE = re.compile(
-    r"\b(completed\s+(all(\s+of)?|my\s+todays?|everything|the\s+work)|all\s+(work\s+done|tasks?\s+done|work\s+completed|finished|done)|sab\s+(kaam\s+)?(ho\s+gaya|khatam|done)|finished\s+(all|everything|todays?\s+work))\b",
+    r"\b(completed\s+(all(\s+of)?|my\s+todays?|everything|the\s+work)|all\s+(work\s+done|tasks?\s+done|work\s+completed|finished|done)|sab\s+(kaam\s+)?(ho\s+gaya|khatam|done)|finished\s+(all|everything|todays?\s+work))\b|सब\s*(काम\s*)?हो\s*गया|पूरा\s*हो\s*गया",
     re.I,
 )
 
 PRACTICE_QUESTIONS_RE = re.compile(
-    r"\b(generate\s+(practice\s+)?questions?|practice\s+questions?|quiz(\s+banao)?|test\s+me|questions?\s+banao|question\s+poocho|practice\s+karni\s+hai)\b",
+    r"\b(generate\s+(practice\s+)?questions?|practice\s+questions?|quiz(\s+banao)?|test\s+me|questions?\s+banao|question\s+poocho|practice\s+karni\s+hai)\b|प्रश्न\s*पूछो|सवाल\s*पूछो|क्विज|प्रैक्टिस",
     re.I,
 )
 
 CANCEL_RE = re.compile(
-    r"\b(cancel|delete|hata\s+do|hatao|remove|drop|nahi\s+karna)\b",
+    r"\b(cancel|delete|hata\s+do|hatao|remove|drop|nahi\s+karna)\b|कैंसिल|रद्द|हटा\s*दो|हटाओ|डिलीट",
     re.I,
 )
 
@@ -202,7 +202,7 @@ def do_cancel_plan(text, lang="en"):
     today = date.today()
 
     # 1. All future plans ("cancel all future plan", "sabhi future plan cancel kardo")
-    if ("future" in lower or "aage" in lower or "aane" in lower):
+    if ("future" in lower or "aage" in lower or "aane" in lower or "भविष्य" in lower):
         count = db.delete_future_tasks(today)
         if count > 0:
             return (
@@ -217,7 +217,7 @@ def do_cancel_plan(text, lang="en"):
         )
 
     # 2. Tomorrow's plan ("cancel all tomorrow plan", "kal ka plan cancel kardo")
-    if re.search(r"\b(tomorrow|tommorow|tomorow|kal)\b", lower):
+    if re.search(r"\b(tomorrow|tommorow|tomorow|kal|कल)\b", lower) or "कल" in lower:
         tomorrow = today + timedelta(days=1)
         count = db.delete_tasks_by_date(tomorrow)
         if count > 0:
@@ -233,7 +233,7 @@ def do_cancel_plan(text, lang="en"):
         )
 
     # 3. Today's plan ("cancel today's plan", "aaj ka plan cancel karo")
-    if re.search(r"\b(today|aaj)\b", lower):
+    if re.search(r"\b(today|aaj|आज)\b", lower) or "आज" in lower:
         count = db.delete_tasks_by_date(today)
         if count > 0:
             return (
