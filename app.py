@@ -10,6 +10,7 @@ from pynput import keyboard
 
 import agent
 import db
+import voice
 
 # ---------- HIGH-DPI AWARENESS (FIXES BLURRY TEXT ON WINDOWS 11) ----------
 try:
@@ -21,6 +22,7 @@ except Exception:
         pass
 
 HOTKEY = "<ctrl>+<alt>+k"
+VOICE_HOTKEY = "<ctrl>+<alt>+v"
 events = queue.Queue()
 
 # High-Contrast Sleek Glassy Palette
@@ -62,6 +64,8 @@ class ChatWindow:
 
         self.history = []
         self.busy = False
+        self.voice_recording = False
+        self.voice_inst = voice.VoiceInput.get_instance()
         self.thinking_index = None
 
         # ---------- TOP HEADER BAR ----------
@@ -126,16 +130,32 @@ class ChatWindow:
             activeforeground="#ffffff",
             font=("Segoe UI", 9, "bold"),
             relief="flat",
-            padx=10,
+            padx=8,
             pady=4,
             cursor="hand2",
             command=self.send,
         )
         self.send_btn.pack(side="left", padx=(0, 4))
 
+        self.voice_btn = tk.Button(
+            top_btns,
+            text="🎙️ Voice",
+            bg="#7c3aed",
+            fg="#ffffff",
+            activebackground="#6d28d9",
+            activeforeground="#ffffff",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=8,
+            pady=4,
+            cursor="hand2",
+            command=self.toggle_voice,
+        )
+        self.voice_btn.pack(side="left", padx=(0, 4))
+
         self.upload_btn = tk.Button(
             top_btns,
-            text="📎 Attachment",
+            text="📎 Attach",
             bg="#0f766e",
             fg="#ffffff",
             activebackground="#115e59",
@@ -183,13 +203,14 @@ class ChatWindow:
         )
         self.entry.pack(side="left", fill="both", expand=True)
         self.entry.bind("<Return>", self.on_enter)
+        self.win.bind("<F4>", lambda e: self.toggle_voice())
 
         # ---------- FOOTER STATUS HINT ----------
         footer = tk.Frame(self.win, bg=BG_GLASS, padx=16, pady=4)
         footer.pack(fill="x", side="bottom")
         footer_label = tk.Label(
             footer,
-            text="Enter: Send  •  Shift+Enter: New Line  •  Ctrl+Alt+K: Toggle  •  📎 Supports PDF, Word, PPT, Excel & Images",
+            text="Enter: Send  •  Shift+Enter: New Line  •  Ctrl+Alt+K: Toggle  •  🎙️ Voice (F4 / Ctrl+Alt+V)  •  📎 Attach Docs",
             font=FONT_FOOTER,
             fg=TEXT_FOOTER,
             bg=BG_GLASS,
@@ -281,6 +302,8 @@ class ChatWindow:
         self.add_message("You", text, is_user=True)
         self.busy = True
         self.send_btn.config(state="disabled")
+        self.voice_btn.config(state="disabled")
+        self.upload_btn.config(state="disabled")
         self.show_thinking("Thinking...")
         threading.Thread(target=self.work, args=(text,), daemon=True).start()
 
@@ -316,8 +339,9 @@ class ChatWindow:
         self.add_message("You", f"[Attached: {file_name}]", is_user=True)
         self.busy = True
         self.send_btn.config(state="disabled")
+        self.voice_btn.config(state="disabled")
         self.upload_btn.config(state="disabled")
-        self.show_thinking(f"Analyzing {file_name} offline & generating practice questions...")
+        self.show_thinking(f"Analyzing {file_name} offline...")
         threading.Thread(target=self.work_document, args=(file_path,), daemon=True).start()
 
     def work_document(self, file_path):
@@ -340,7 +364,66 @@ class ChatWindow:
         self.busy = False
         self.send_btn.config(state="normal")
         self.upload_btn.config(state="normal")
+        self.voice_btn.config(state="normal")
         self.entry.focus_set()
+
+    # ---------- offline voice input ----------
+    def toggle_voice(self):
+        if self.busy and not self.voice_recording:
+            return
+
+        if not self.voice_recording:
+            # Start Recording
+            try:
+                self.voice_inst.start_recording()
+                self.voice_recording = True
+                self.voice_btn.config(
+                    text="⏹️ Stop",
+                    bg="#dc2626",
+                    activebackground="#b91c1c",
+                )
+                self.show_thinking("🎙️ Listening... Speak now (click Stop or press F4 when done)")
+            except Exception as e:
+                self.add_message("Assistant", f"Microphone error: {e}", is_user=False)
+        else:
+            # Stop Recording & Transcribe
+            self.voice_recording = False
+            self.voice_btn.config(
+                text="⏳...",
+                bg="#475569",
+                state="disabled",
+            )
+            self.show_thinking("Transcribing your speech offline...")
+
+            def _transcribe():
+                try:
+                    text = self.voice_inst.stop_and_transcribe()
+                except Exception as e:
+                    text = ""
+                    print(f"Voice error: {e}")
+                events.put(("voice_text", text))
+
+            threading.Thread(target=_transcribe, daemon=True).start()
+
+    def on_voice_text(self, text):
+        self.clear_thinking()
+        self.voice_btn.config(
+            text="🎙️ Voice",
+            bg="#7c3aed",
+            activebackground="#6d28d9",
+            state="normal",
+        )
+        if text:
+            current = self.entry.get("1.0", "end-1c").strip()
+            if current:
+                self.entry.insert("end", f" {text}")
+            else:
+                self.entry.insert("end", text)
+            self.entry.focus_set()
+            self.entry.mark_set("insert", "end")
+        else:
+            self.show_thinking("No speech detected. Try speaking closer to the mic.")
+            self.win.after(2500, self.clear_thinking)
 
     # ---------- show / hide ----------
     def show(self):
@@ -357,11 +440,17 @@ class ChatWindow:
 
 def main():
     db.init_db()
+    # Preload Whisper voice model in background for instantaneous transcription
+    voice.VoiceInput.get_instance().preload_model()
+
     root = tk.Tk()
     root.withdraw()
     window = ChatWindow(root)
 
-    keyboard.GlobalHotKeys({HOTKEY: lambda: events.put(("show", None))}).start()
+    keyboard.GlobalHotKeys({
+        HOTKEY: lambda: events.put(("show", None)),
+        VOICE_HOTKEY: lambda: events.put(("voice_toggle", None)),
+    }).start()
 
     def poll():
         while not events.empty():
@@ -370,10 +459,15 @@ def main():
                 window.show()
             elif kind == "reply":
                 window.on_reply(payload)
+            elif kind == "voice_text":
+                window.on_voice_text(payload)
+            elif kind == "voice_toggle":
+                window.show()
+                window.toggle_voice()
         root.after(100, poll)
 
     poll()
-    print("Assistant is running. Shortcut: Ctrl+Alt+K. Press Ctrl+C in this terminal to stop.")
+    print("Assistant is running. Shortcuts: Ctrl+Alt+K (Toggle), Ctrl+Alt+V (Voice).")
     root.mainloop()
 
 
