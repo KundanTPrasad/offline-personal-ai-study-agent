@@ -51,9 +51,11 @@ def get_tasks(plan_date):
             "SELECT * FROM tasks WHERE plan_date = ?", (str(plan_date),)
         ).fetchall()
 
+
 def update_status(task_id, status):
     with get_conn() as conn:
         conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, task_id))
+
 
 def get_upcoming(from_date):
     with get_conn() as conn:
@@ -61,6 +63,16 @@ def get_upcoming(from_date):
             "SELECT * FROM tasks WHERE plan_date >= ? ORDER BY plan_date, id",
             (str(from_date),),
         ).fetchall()
+
+
+def get_past_pending(before_date):
+    """Returns pending tasks from days prior to before_date."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM tasks WHERE plan_date < ? AND status = 'pending' ORDER BY plan_date, id",
+            (str(before_date),),
+        ).fetchall()
+
 
 def get_plan_dates():
     with get_conn() as conn:
