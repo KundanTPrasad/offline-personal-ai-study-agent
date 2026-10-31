@@ -74,6 +74,27 @@ def get_past_pending(before_date):
         ).fetchall()
 
 
+def delete_tasks_by_date(plan_date):
+    """Deletes all tasks for a specific date. Returns the count of deleted tasks."""
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM tasks WHERE plan_date = ?", (str(plan_date),))
+        return cur.rowcount
+
+
+def delete_future_tasks(after_date):
+    """Deletes all tasks scheduled after after_date. Returns the count of deleted tasks."""
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM tasks WHERE plan_date > ?", (str(after_date),))
+        return cur.rowcount
+
+
+def delete_task_by_id(task_id):
+    """Deletes a specific task by its primary key ID."""
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        return cur.rowcount
+
+
 def get_plan_dates():
     with get_conn() as conn:
         rows = conn.execute(

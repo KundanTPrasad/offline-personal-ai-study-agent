@@ -68,7 +68,7 @@ HINGLISH_WORDS = {
     "hai", "hain", "ka", "ki", "ke", "ko", "mein", "kal", "aaj", "parso", "karne", "karna",
     "kya", "batao", "ho", "gaya", "gaye", "gayi", "kiya", "nahi", "mujhe", "mera", "meri",
     "aur", "phir", "se", "par", "tha", "thi", "kar", "raha", "rahi", "abhi", "bhi", "kaise",
-    "theek", "accha", "badhiya", "kaisa", "kaisi", "sab", "kaam", "banao", "poocho",
+    "theek", "accha", "badhiya", "kaisa", "kaisi", "sab", "kaam", "banao", "poocho", "kardo",
 }
 
 
@@ -124,6 +124,7 @@ STATUS = {
 }
 
 UPCOMING = re.compile(r"upcoming|future|aane wale|aage|all plans|next days|sab plan", re.I)
+
 CHECKIN_RE = re.compile(
     r"\b(checkin|check-in|check in|day end|day-end|wrap up|wrapup|shutdown check|sone ja raha|band kar raha|aaj ka checkin)\b",
     re.I,
@@ -136,6 +137,11 @@ ALL_DONE_RE = re.compile(
 
 PRACTICE_QUESTIONS_RE = re.compile(
     r"\b(generate\s+(practice\s+)?questions?|practice\s+questions?|quiz(\s+banao)?|test\s+me|questions?\s+banao|question\s+poocho|practice\s+karni\s+hai)\b",
+    re.I,
+)
+
+CANCEL_RE = re.compile(
+    r"\b(cancel|delete|hata\s+do|hatao|remove|drop|nahi\s+karna)\b",
     re.I,
 )
 
@@ -188,6 +194,106 @@ def format_tasks_table(rows, lang="en"):
 
     lines.append(sep)
     return "\n".join(lines)
+
+
+# ---------- cancel & delete plan ----------
+def do_cancel_plan(text, lang="en"):
+    lower = text.lower()
+    today = date.today()
+
+    # 1. All future plans ("cancel all future plan", "sabhi future plan cancel kardo")
+    if ("future" in lower or "aage" in lower or "aane" in lower):
+        count = db.delete_future_tasks(today)
+        if count > 0:
+            return (
+                f"All future plans cancelled ({count} task(s) removed)."
+                if lang == "en"
+                else f"Aage ke saare future plans cancel kar diye ({count} task delete hue)."
+            )
+        return (
+            "You have no future plans scheduled."
+            if lang == "en"
+            else "Aage ke liye koi future plan nahi tha."
+        )
+
+    # 2. Tomorrow's plan ("cancel all tomorrow plan", "kal ka plan cancel kardo")
+    if re.search(r"\b(tomorrow|tommorow|tomorow|kal)\b", lower):
+        tomorrow = today + timedelta(days=1)
+        count = db.delete_tasks_by_date(tomorrow)
+        if count > 0:
+            return (
+                f"Tomorrow's plan ({tomorrow.strftime('%d %b %Y')}) cancelled ({count} task(s) removed)."
+                if lang == "en"
+                else f"Kal ({tomorrow.strftime('%d %b %Y')}) ka plan cancel ho gaya ({count} task delete hue)."
+            )
+        return (
+            "No plans found for tomorrow."
+            if lang == "en"
+            else "Kal ke liye koi plan nahi mila."
+        )
+
+    # 3. Today's plan ("cancel today's plan", "aaj ka plan cancel karo")
+    if re.search(r"\b(today|aaj)\b", lower):
+        count = db.delete_tasks_by_date(today)
+        if count > 0:
+            return (
+                f"Today's plan ({today.strftime('%d %b %Y')}) cancelled ({count} task(s) removed)."
+                if lang == "en"
+                else f"Aaj ({today.strftime('%d %b %Y')}) ka plan cancel ho gaya ({count} task delete hue)."
+            )
+        return (
+            "No plans found for today."
+            if lang == "en"
+            else "Aaj ke liye koi plan nahi mila."
+        )
+
+    # 4. Specific calendar date ("cancel 5 Nov plan")
+    found = plan.find_date_in_text(text)
+    if found:
+        day, month = found
+        try:
+            d = date(today.year, month, day)
+            count = db.delete_tasks_by_date(d)
+            if count > 0:
+                return (
+                    f"Plans for {d.strftime('%d %b %Y')} cancelled ({count} task(s) removed)."
+                    if lang == "en"
+                    else f"{d.strftime('%d %b %Y')} ka plan cancel ho gaya ({count} task delete hue)."
+                )
+            return f"No plans found for {d.strftime('%d %b %Y')}."
+        except ValueError:
+            pass
+
+    # 5. Specific task by title (e.g. "party cancel kardo" or "cancel college jaana")
+    upcoming = db.get_upcoming(today)
+    if upcoming:
+        clean_text = re.sub(
+            r"\b(cancel|delete|hata\s+do|hatao|remove|kardo|karna|plan|tasks?|the|all|my|sabhi|sab)\b",
+            "",
+            lower,
+            flags=re.I,
+        ).strip()
+        best, best_score = None, 0.0
+        for task in upcoming:
+            score = difflib.SequenceMatcher(None, clean_text, task["title"].lower()).ratio()
+            if clean_text and (clean_text in task["title"].lower() or task["title"].lower() in clean_text):
+                score += 0.5
+            if score > best_score:
+                best, best_score = task, score
+
+        if best and best_score >= 0.4:
+            db.delete_task_by_id(best["id"])
+            return (
+                f"Cancelled task: {best['title']} ({best['plan_date']})."
+                if lang == "en"
+                else f"Task cancel ho gaya: {best['title']} ({best['plan_date']})."
+            )
+
+    return (
+        "Couldn't find the plan to cancel. You can say 'cancel tomorrow plan', 'cancel all future plan', or name the task."
+        if lang == "en"
+        else "Cancel karne ke liye koi plan nahi mila. Aap 'kal ka plan cancel kardo' ya 'cancel all future plan' bol sakte hain."
+    )
 
 
 # ---------- check-in ----------
@@ -610,7 +716,6 @@ def analyze_study_document(file_path):
     p = Path(file_path)
     res = extract_text_from_file(file_path)
 
-    # Store in context for on-demand practice questions
     LAST_DOCUMENT_CONTEXT["name"] = p.name
 
     # If it's an image (or scanned PDF page)
@@ -746,15 +851,19 @@ def do_chat(text, history, lang):
 def handle(text, history):
     lang = "hi" if is_hinglish(text) else "en"
 
-    # Instant check: On-demand practice questions for last uploaded document
-    if PRACTICE_QUESTIONS_RE.search(text.strip().lower()):
+    # Fast-path 1: Cancel / Delete plan (MUST be before update_status and router!)
+    if CANCEL_RE.search(text.strip().lower()):
+        reply = do_cancel_plan(text, lang)
+        intent = "cancel_plan"
+    # Fast-path 2: On-demand practice questions for last uploaded document
+    elif PRACTICE_QUESTIONS_RE.search(text.strip().lower()):
         reply = do_generate_practice_questions(lang)
         intent = "practice_questions"
-    # Instant check: "completed all work today" / "sab kaam ho gaya"
+    # Fast-path 3: "completed all work today" / "sab kaam ho gaya"
     elif ALL_DONE_RE.search(text.strip().lower()):
         reply = do_complete_all_today(lang)
         intent = "update_status"
-    # Instant check: day-end checkin shortcut
+    # Fast-path 4: day-end checkin shortcut
     elif CHECKIN_RE.search(text.strip().lower()):
         reply = do_checkin(lang)
         intent = "checkin"
